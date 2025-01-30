@@ -114,3 +114,8 @@ spec:
               number: 80
 
 # https://nginx.onprem.kuberise.dev/
+
+
+# Here 20 percentage of requests go to canary deployment and others go to stable deployment
+
+# Attention: app names are 'nginx' in both deployment

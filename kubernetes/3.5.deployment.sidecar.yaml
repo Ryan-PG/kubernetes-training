@@ -33,3 +33,8 @@
 # look at the init container when you start the pod
 # get a shell and select which container to go to
 # check env variables inside the main container
+
+
+
+# For doing `initContainers` every a specific time, you must use cron jobs and make a contatiner for soing some stuffs.
+# Also for accessibility use service accounts in kubernetes.
