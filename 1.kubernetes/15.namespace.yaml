@@ -1,14 +1,15 @@
-# # Example 1: Creating a Namespace
-# apiVersion: v1
-# kind: Namespace
-# metadata:
-#   name: development
-#   labels:
-#     environment: dev
-#     team: backend
-#   annotations:
-#     description: "Namespace for development environment"
-#     contact: "dev-team@example.com"
+---
+# Example 1: Creating a Namespace
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: development
+  labels:
+    environment: dev
+    team: backend
+  annotations:
+    description: "Namespace for development environment"
+    contact: "dev-team@example.com"
 
 ---
 # Example 2: Resource Quota for a Namespace
@@ -17,16 +18,16 @@ kind: ResourceQuota
 metadata:
   name: dev-resource-quota
   namespace: development
-  spec:
-    hard:
-      requests.cpu: "2"
-      requests.memory: "4Gi"
-      limits.cpu: "4"
-      limits.memory: "8Gi"
-      pods: "10"
-      services: "5"
-      configmaps: "20"
-      persistentvolumeclaims: "5"
+spec:
+  hard:
+    requests.cpu: "2"
+    requests.memory: "4Gi"
+    limits.cpu: "4"
+    limits.memory: "8Gi"
+    pods: "10"
+    services: "5"
+    configmaps: "20"
+    persistentvolumeclaims: "5"
 
 ---
 # Example 4: Deploying a Pod with Labels and Annotations

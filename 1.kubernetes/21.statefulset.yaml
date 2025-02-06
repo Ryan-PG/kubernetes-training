@@ -1,0 +1,252 @@
+# Question: how the pods can reach eachothers.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: postgresql
+  labels:
+    app: postgresql
+spec:
+  clusterIP: None  # This makes it a headless service
+  ports:
+  - port: 5432
+    targetPort: postgresql
+    protocol: TCP
+    name: postgresql
+  selector:
+    app: postgresql
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: postgresql-secrets
+type: Opaque
+data:
+  username: bXl1c2Vy                                  # base64 encoded 'myuser'
+  password: bXlwYXNzd29yZA==                          # base64 encoded 'mypassword'
+  replication-user: cmVwbGljYXRvcg==                  # base64 encoded 'replicator'
+  replication-password: cmVwbGljYXRvcl9wYXNzd29yZA==  # base64 encoded 'replicator_password'
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: postgresql
+spec:
+  serviceName: postgresql
+  replicas: 3
+  selector:
+    matchLabels:
+      app: postgresql
+  template:
+    metadata:
+      labels:
+        app: postgresql
+    spec:
+      containers:
+        - name: postgresql
+          image: bitnami/postgresql:14.10.0
+          ports:
+            - containerPort: 5432
+              name: postgresql
+          env:
+            - name: POSTGRES_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgresql-secrets
+                  key: username
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgresql-secrets
+                  key: password
+            - name: POSTGRES_DB
+              value: mydatabase
+            # Replication Configuration
+            - name: POSTGRESQL_REPLICATION_MODE  # This will be overwritten by command
+              value: master
+            - name: POSTGRESQL_REPLICATION_USER
+              valueFrom:
+                secretKeyRef:
+                  name: postgresql-secrets
+                  key: replication-user
+            - name: POSTGRESQL_REPLICATION_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgresql-secrets
+                  key: replication-password
+            # Additional required settings
+            - name: POSTGRESQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: postgresql-secrets
+                  key: password
+            - name: POSTGRESQL_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: postgresql-secrets
+                  key: username
+            - name: POSTGRESQL_DATABASE
+              value: mydatabase
+          command:
+            - sh
+            - -ec
+            - |
+              ORDINAL=$(echo ${HOSTNAME} | awk -F'-' '{print $NF}')
+              if [ "$ORDINAL" = "0" ]; then
+                echo "Starting as master"
+                export POSTGRESQL_REPLICATION_MODE=master
+                export POSTGRESQL_REPLICATION_USER=$(cat /opt/bitnami/postgresql/secrets/replication-user)
+                export POSTGRESQL_REPLICATION_PASSWORD=$(cat /opt/bitnami/postgresql/secrets/replication-password)
+              else
+                echo "Starting as replica"
+                export POSTGRESQL_REPLICATION_MODE=slave
+                export POSTGRESQL_MASTER_HOST=postgresql-0.postgresql
+                export POSTGRESQL_MASTER_PORT_NUMBER=5432
+                until pg_isready -h postgresql-0.postgresql -U $(cat /opt/bitnami/postgresql/secrets/replication-user) -d mydatabase --timeout=2; do
+                  echo "Waiting for master at postgresql-0.postgresql:5432"
+                  sleep 2
+                done
+              fi
+              exec /opt/bitnami/scripts/postgresql/entrypoint.sh /opt/bitnami/scripts/postgresql/run.sh
+          volumeMounts:
+            - name: data
+              mountPath: /bitnami/postgresql
+            - name: secrets
+              mountPath: /opt/bitnami/postgresql/secrets
+              readOnly: true
+      volumes:
+        - name: secrets
+          secret:
+            secretName: postgresql-secrets
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 1Gi
+
+# See how the pods are named and how they are created in order
+# Increase the replicas to 8
+# Decrease the replicas to 3 and see how the pods are deleted in order from the last one
+# Restart one of the pods and see how it is recreated with the same name
+# check the pvc's that there are one pvc for each pod
+# check the logs of master and slave pods
+# connect to the master and read replicas using pgadmin and these addresses:
+# master: postgresql-0.postgresql.kuberise.svc.cluster.local
+# replica: postgresql-1.postgresql.kuberise.svc.cluster.local
+# create a sample table in the master using this command:
+
+# CREATE TABLE my_table (
+#     id SERIAL PRIMARY KEY,
+#     name VARCHAR(100)
+# );
+
+# -- Insert three entries into the table
+# INSERT INTO my_table (name) VALUES
+# ('Alice'),
+# ('Bob'),
+# ('Charlie');
+
+# check that the table is replicated in the replicas
+
+
+
+
+
+---
+# Network Security Policies
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: postgresql-network-policy
+spec:
+  podSelector:
+    matchLabels:
+      app: postgresql  # Matches your PostgreSQL pods
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    # Allow traffic between PostgreSQL pods for replication
+    - from:
+        - podSelector:
+            matchLabels:
+              app: postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
+    # # Allow traffic from application pods (adjust labels as needed)
+    - ports:
+        - protocol: TCP
+          port: 5432
+      # Define more specific rules for the source (namespace and pod labels)
+      from:
+        - podSelector:
+            matchLabels:
+              role: application
+        - namespaceSelector:
+            matchLabels:
+              type: application
+  egress:
+    # Allow DNS resolution
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+        - podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - protocol: UDP
+          port: 53
+        - protocol: TCP
+          port: 53
+    # Allow traffic between PostgreSQL pods for replication
+    - to:
+        - podSelector:
+            matchLabels:
+              app: postgresql
+      ports:
+        - protocol: TCP
+          port: 5432
+---
+# Default deny policy for the namespace (above policies are only for PostgreSQL pods and application pods, and default deny is for all other pods)
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+spec:
+  podSelector: {}  # Applies to all pods in the namespace
+  policyTypes:
+    - Ingress
+    - Egress
+
+
+# apply deny all and then look at the logs of read replica pods. They can not communicate with the master node anymore.
+# also check pgadmin and refresh databases and see that they can not connect to the database anymore
+# then add postgresql network policies and check the logs and pgadmin again
+
+
+
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: postgresql-pdb
+spec:
+  maxUnavailable: 1  # Only one pod can be unavailable at a time
+  selector:
+    matchLabels:
+      app: postgresql
+
+# because the identity of the pods are important and unique in statefulset, if you drain the node,
+# in the worse case scenario, all primary and replica pods will be terminated together and then recreated together in another node.
+# it is different with deployment
+# By PDB you make sure that only one pod is terminated at a time.
+# all read replica will be terminated and reschedule first
+# then the primary pod will be terminated and rescheduled
+# during primary pod unavailability, all write operations fail.
+# only read operations work from replicas.
+# applications need to handle this temporary write unavailability.
